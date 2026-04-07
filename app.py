@@ -84,6 +84,12 @@ def send_slack_alerts(message: str) -> None:
     send_email_alert(message)
 
 
+# 🏥 HEALTH CHECK para o Render
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    return "OK", 200
+
+
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
     raw_body = request.get_data()
