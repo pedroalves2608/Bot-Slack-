@@ -3,6 +3,7 @@ import os
 import unicodedata
 import smtplib
 from email.mime.text import MIMEText
+import re
 
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
@@ -17,12 +18,13 @@ except ImportError:
 
 app = Flask(__name__)
 
-# 🔥 NORMALIZAÇÃO (remove acento)
+# 🔥 NORMALIZAÇÃO (remove acento + padroniza)
 def normalize(text):
-    return unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII")
+    return unicodedata.normalize("NFKD", text).encode("ASCII", "ignore").decode("ASCII").lower()
 
+# 🔑 KEYWORDS
 _raw_keywords = os.environ.get("SLACK_ALERT_KEYWORDS", "urgente,erro").strip()
-KEYWORDS = [normalize(k.strip().lower()) for k in _raw_keywords.split(",") if k.strip()]
+KEYWORDS = [normalize(k.strip()) for k in _raw_keywords.split(",") if k.strip()]
 
 # SLACK
 SLACK_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
@@ -61,7 +63,7 @@ def send_email_alert(message: str):
     except Exception as e:
         print("❌ Erro ao enviar email:", e)
 
-# 🚨 ENVIO DE ALERTA (Slack + Email)
+# 🚨 ENVIO DE ALERTA
 def send_slack_alerts(message: str) -> None:
     text = f"🚨 ALERTA:\n{message}"
     print("🚀 TENTANDO ENVIAR ALERTA:", text)
@@ -69,31 +71,26 @@ def send_slack_alerts(message: str) -> None:
     if USER_ID:
         try:
             client.chat_postMessage(channel=USER_ID, text=text)
-            print("✅ ALERTA ENVIADO VIA DM")
         except SlackApiError as e:
             print("❌ ERRO DM:", e.response)
 
     if ALERT_CHANNEL:
         try:
             client.chat_postMessage(channel=ALERT_CHANNEL, text=text)
-            print("✅ ALERTA ENVIADO NO CANAL")
         except SlackApiError as e:
             print("❌ ERRO CANAL:", e.response)
 
-    # 👉 ENVIA EMAIL TAMBÉM
     send_email_alert(message)
-
 
 # 🏠 ROTA RAIZ
 @app.route("/", methods=["GET"])
 def home():
     return "Bot Slack está rodando! 🚀", 200
 
-# 🏥 HEALTH CHECK para o Render
+# 🏥 HEALTH CHECK
 @app.route("/healthz", methods=["GET"])
 def health_check():
     return "OK", 200
-
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
@@ -101,13 +98,12 @@ def slack_events():
 
     # 🔐 Verificação de assinatura
     if _signature_verifier:
-        if not _signature_verifier.is_valid_request(raw_body, dict(request.headers)):
-            print("❌ Assinatura inválida")
+        if not _signature_verifier.is_valid_request(raw_body, request.headers):
             return "", 403
 
     data = json.loads(raw_body.decode("utf-8"))
 
-    # 🔥 CHALLENGE (Slack setup)
+    # 🔥 CHALLENGE
     if "challenge" in data:
         return jsonify({"challenge": data["challenge"]})
 
@@ -120,40 +116,10 @@ def slack_events():
     channel_type = event.get("channel_type")
     channel = event.get("channel")
     text_original = event.get("text", "")
-    text = normalize(text_original.lower())
+    text = normalize(text_original)
 
-    # 🔍 DEBUG
-    print("\n======================")
-    print("📩 EVENTO:", event)
-    print("📝 TEXTO:", text_original)
-    print("🧠 NORMALIZADO:", text)
-    print("🎯 KEYWORDS:", KEYWORDS)
-    print("======================\n")
-
-    # 🟢 RESPOSTA EM DM
-    if channel_type == "im":
-        try:
-            client.chat_postMessage(
-                channel=channel,
-                text=f"🤖 Recebi sua mensagem: {text_original}"
-            )
-            print("✅ Respondeu DM")
-        except SlackApiError as e:
-            print("❌ ERRO DM:", e.response)
-
-    # 🔵 RESPOSTA EM CANAL
-    if channel_type == "channel":
-        try:
-            client.chat_postMessage(
-                channel=channel,
-                text=f"👀 Vi sua mensagem: {text_original}"
-            )
-            print("✅ Respondeu canal")
-        except SlackApiError as e:
-            print("❌ ERRO canal:", e.response)
-
-    # 🚨 DETECÇÃO DE KEYWORDS
-    if any(word in text for word in KEYWORDS):
+    # 🔍 DETECÇÃO DE KEYWORDS (mais segura)
+    if any(re.search(rf"\b{word}\b", text) for word in KEYWORDS):
         print("🔥 KEYWORD DETECTADA!")
         send_slack_alerts(text_original)
     else:
