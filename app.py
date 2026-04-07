@@ -84,6 +84,11 @@ def send_slack_alerts(message: str) -> None:
     send_email_alert(message)
 
 
+# 🏠 ROTA RAIZ
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot Slack está rodando! 🚀", 200
+
 # 🏥 HEALTH CHECK para o Render
 @app.route("/healthz", methods=["GET"])
 def health_check():
