@@ -29,7 +29,6 @@ KEYWORDS = [normalize(k.strip()) for k in _raw_keywords.split(",") if k.strip()]
 # SLACK
 SLACK_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "").strip()
 USER_ID = os.environ.get("SLACK_USER_ID", "").strip()
-ALERT_CHANNEL = os.environ.get("SLACK_ALERT_CHANNEL", "").strip()
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "").strip()
 
 # EMAIL
@@ -40,6 +39,19 @@ EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
 
 _signature_verifier = SignatureVerifier(SLACK_SIGNING_SECRET) if SLACK_SIGNING_SECRET else None
 client = WebClient(token=SLACK_TOKEN)
+
+def get_user_real_name(user_id):
+    """Pega o nome real do usuário pelo ID"""
+    try:
+        response = client.users_info(user=user_id)
+        if response.get('ok'):
+            real_name = response['user'].get('real_name')
+            if real_name:
+                return real_name
+            return response['user'].get('name')
+    except Exception as e:
+        print(f"Erro ao pegar nome do usuário: {e}")
+    return user_id
 
 # 📧 ENVIO DE EMAIL
 def send_email_alert(message: str):
@@ -72,25 +84,112 @@ def send_email_alert(message: str):
     except Exception as e:
         print(f"❌ Erro ao enviar email: {e}")
 
-# 🚨 ENVIO DE ALERTA (APENAS DENTRO DO BOT)
-def send_slack_alerts(message: str) -> None:
-    text = f"🚨 ALERTA:\n{message}"
-    print("🚀 TENTANDO ENVIAR ALERTA:", text)
+# 🚨 ENVIO DE ALERTA COM QUOTE E LINK
+def send_slack_alerts(original_message: str, channel_id: str = None, ts: str = None, user_id: str = None) -> None:
+    print("🚀 TENTANDO ENVIAR ALERTA COM QUOTE...")
+    
+    # Pega o nome do usuário que enviou a mensagem original
+    user_name = get_user_real_name(user_id) if user_id else "Alguém"
+    
+    # Constrói o link para a mensagem original (se tiver channel_id e ts)
+    message_link = ""
+    if channel_id and ts:
+        # Remove o ponto do timestamp se existir
+        ts_clean = ts.replace('.', '') if '.' in ts else ts
+        message_link = f"\n\n🔗 <https://slack.com/archives/{channel_id}/p{ts_clean}|Clique aqui para ver a mensagem original>"
+    
+    # Formata a mensagem com quote e informações
+    formatted_alert = f"""🚨 *ALERTA DETECTADO!*
 
-    # ✅ APENAS ENVIA PARA O PRÓPRIO BOT (DM)
+*👤 Quem:* {user_name}
+*📝 Mensagem original:* 
+> {original_message}
+*🔑 Palavra-chave detectada:* {', '.join(KEYWORDS)}{message_link}
+
+💡 *Dica:* Clique no link acima para ir direto ao local da mensagem!"""
+    
+    print(f"📝 Alerta formatado: {formatted_alert}")
+    
+    # ✅ ENVIA APENAS PARA SEU DM
     if USER_ID:
         try:
-            response = client.chat_postMessage(channel=USER_ID, text=text)
-            print(f"✅ Alerta enviado para o bot!")
+            # Envia como uma mensagem normal (não como reply)
+            response = client.chat_postMessage(
+                channel=USER_ID,
+                text=formatted_alert,
+                mrkdwn=True  # Permite formatação markdown
+            )
+            print(f"✅ Alerta com quote enviado para seu DM!")
+            
+            # Se tiver o timestamp da mensagem original, adiciona uma reação de alerta lá (opcional)
+            if channel_id and ts:
+                try:
+                    client.reactions_add(
+                        channel=channel_id,
+                        name="warning",
+                        timestamp=ts
+                    )
+                    print(f"✅ Reação de alerta adicionada à mensagem original!")
+                except Exception as e:
+                    print(f"⚠️ Não foi possível adicionar reação: {e}")
+                    
         except SlackApiError as e:
-            print(f"❌ ERRO: {e.response.get('error')}")
+            print(f"❌ ERRO DM: {e.response.get('error')}")
     else:
         print("⚠️ USER_ID não configurado")
+    
+    send_email_alert(original_message)
 
-    # ❌ NÃO ENVIA PARA NENHUM CANAL
-    # O ALERT_CHANNEL É IGNORADO COMPLETAMENTE
+@app.route("/slack/events", methods=["POST"])
+def slack_events():
+    raw_body = request.get_data()
 
-    send_email_alert(message)
+    if _signature_verifier:
+        if not _signature_verifier.is_valid_request(raw_body, request.headers):
+            return "", 403
+
+    data = json.loads(raw_body.decode("utf-8"))
+
+    if "challenge" in data:
+        return jsonify({"challenge": data["challenge"]})
+
+    event = data.get("event", {})
+
+    # Ignora mensagens de bots
+    if event.get("bot_id") or event.get("subtype") in ("bot_message", "message_changed"):
+        return "", 200
+
+    text_original = event.get("text", "")
+    text = normalize(text_original)
+    
+    # Pega informações da mensagem original
+    channel_id = event.get("channel")  # Canal onde a mensagem foi enviada
+    ts = event.get("ts")  # Timestamp da mensagem
+    user_id = event.get("user")  # ID do usuário que enviou
+    
+    print(f"📝 Mensagem: '{text_original}'")
+    print(f"📍 Canal: {channel_id}")
+    print(f"🕒 Timestamp: {ts}")
+    print(f"👤 Usuário: {user_id}")
+    print(f"🔑 Keywords: {KEYWORDS}")
+
+    # Verifica se tem keyword
+    keyword_detected = False
+    detected_words = []
+    for word in KEYWORDS:
+        if word in text:
+            print(f"✅ KEYWORD: '{word}'")
+            keyword_detected = True
+            detected_words.append(word)
+            break
+    
+    if keyword_detected:
+        print("🔥 Enviando alerta com quote...")
+        send_slack_alerts(text_original, channel_id, ts, user_id)
+    else:
+        print("⚠️ Nenhuma keyword")
+
+    return "", 200
 
 # 🏠 ROTA RAIZ
 @app.route("/", methods=["GET"])
@@ -126,46 +225,6 @@ def test_email():
         return "✅ Email enviado com sucesso!", 200
     except Exception as e:
         return f"❌ Erro: {str(e)}", 500
-
-@app.route("/slack/events", methods=["POST"])
-def slack_events():
-    raw_body = request.get_data()
-
-    if _signature_verifier:
-        if not _signature_verifier.is_valid_request(raw_body, request.headers):
-            return "", 403
-
-    data = json.loads(raw_body.decode("utf-8"))
-
-    if "challenge" in data:
-        return jsonify({"challenge": data["challenge"]})
-
-    event = data.get("event", {})
-
-    if event.get("bot_id") or event.get("subtype") in ("bot_message", "message_changed"):
-        return "", 200
-
-    text_original = event.get("text", "")
-    text = normalize(text_original)
-    
-    print(f"📝 Mensagem: '{text_original}'")
-    print(f"🔑 Keywords: {KEYWORDS}")
-
-    keyword_detected = False
-    for word in KEYWORDS:
-        if word in text:
-            print(f"✅ KEYWORD: '{word}'")
-            keyword_detected = True
-            break
-    
-    if keyword_detected:
-        print("🔥 Enviando alerta...")
-        send_slack_alerts(text_original)
-    else:
-        print("⚠️ Nenhuma keyword")
-
-    return "", 200
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "3000"))
