@@ -43,6 +43,11 @@ client = WebClient(token=SLACK_TOKEN)
 
 # 📧 ENVIO DE EMAIL
 def send_email_alert(message: str):
+    print(f"🔍 DEBUG - EMAIL_ENABLED: {EMAIL_ENABLED}")
+    print(f"🔍 DEBUG - EMAIL_FROM: {EMAIL_FROM}")
+    print(f"🔍 DEBUG - EMAIL_TO: {EMAIL_TO}")
+    print(f"🔍 DEBUG - EMAIL_APP_PASSWORD: {'OK' if EMAIL_APP_PASSWORD else 'MISSING'}")
+    
     if not EMAIL_ENABLED:
         print("⚠️ Email desativado")
         return
@@ -97,6 +102,31 @@ def home():
 @app.route("/healthz", methods=["GET"])
 def health_check():
     return "OK", 200
+
+# 🧪 ROTA DE TESTE DE EMAIL
+@app.route("/test-email", methods=["GET"])
+def test_email():
+    try:
+        EMAIL_FROM = os.getenv("EMAIL_FROM")
+        EMAIL_TO = os.getenv("EMAIL_TO")
+        EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+        
+        if not EMAIL_FROM or not EMAIL_TO or not EMAIL_APP_PASSWORD:
+            return f"❌ Configurações faltando: FROM={bool(EMAIL_FROM)}, TO={bool(EMAIL_TO)}, PASSWORD={bool(EMAIL_APP_PASSWORD)}", 500
+        
+        msg = MIMEText("🧪 Teste do bot Slack - email funcionando!")
+        msg["Subject"] = "🧪 Teste Bot Slack"
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO
+        
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_FROM, EMAIL_APP_PASSWORD)
+            server.send_message(msg)
+        
+        return "✅ Email enviado com sucesso!", 200
+    except Exception as e:
+        return f"❌ Erro: {str(e)}", 500
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
