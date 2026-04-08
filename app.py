@@ -4,6 +4,7 @@ import unicodedata
 import smtplib
 from email.mime.text import MIMEText
 import re
+from datetime import datetime
 
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
@@ -40,18 +41,15 @@ EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
 _signature_verifier = SignatureVerifier(SLACK_SIGNING_SECRET) if SLACK_SIGNING_SECRET else None
 client = WebClient(token=SLACK_TOKEN)
 
-def get_user_real_name(user_id):
-    """Pega o nome real do usuário pelo ID"""
+def get_channel_name(channel_id):
+    """Pega o nome do canal pelo ID"""
     try:
-        response = client.users_info(user=user_id)
+        response = client.conversations_info(channel=channel_id)
         if response.get('ok'):
-            real_name = response['user'].get('real_name')
-            if real_name:
-                return real_name
-            return response['user'].get('name')
+            return response['channel'].get('name')
     except Exception as e:
-        print(f"Erro ao pegar nome do usuário: {e}")
-    return user_id
+        print(f"Erro ao pegar nome do canal: {e}")
+    return channel_id
 
 # 📧 ENVIO DE EMAIL
 def send_email_alert(message: str):
@@ -84,44 +82,45 @@ def send_email_alert(message: str):
     except Exception as e:
         print(f"❌ Erro ao enviar email: {e}")
 
-# 🚨 ENVIO DE ALERTA COM QUOTE E LINK
+# 🚨 ENVIO DE ALERTA SIMPLES (ESTILO SLACK)
 def send_slack_alerts(original_message: str, channel_id: str = None, ts: str = None, user_id: str = None) -> None:
-    print("🚀 TENTANDO ENVIAR ALERTA COM QUOTE...")
+    print("🚀 TENTANDO ENVIAR ALERTA...")
     
-    # Pega o nome do usuário que enviou a mensagem original
-    user_name = get_user_real_name(user_id) if user_id else "Alguém"
+    # Pega o nome do canal
+    channel_name = get_channel_name(channel_id) if channel_id else "desconhecido"
     
-    # Constrói o link para a mensagem original (se tiver channel_id e ts)
+    # Formata a data/hora
+    if ts:
+        timestamp = float(ts.split('.')[0]) if '.' in ts else float(ts)
+        dt = datetime.fromtimestamp(timestamp)
+        data_hora = dt.strftime("%B %d at %I:%M %p").lstrip('0').replace(' 0', ' ')
+    else:
+        data_hora = "today"
+    
+    # Constrói o link para a mensagem original
     message_link = ""
     if channel_id and ts:
-        # Remove o ponto do timestamp se existir
         ts_clean = ts.replace('.', '') if '.' in ts else ts
-        message_link = f"\n\n🔗 <https://slack.com/archives/{channel_id}/p{ts_clean}|Clique aqui para ver a mensagem original>"
+        message_link = f"https://slack.com/archives/{channel_id}/p{ts_clean}"
     
-    # Formata a mensagem com quote e informações
-    formatted_alert = f"""🚨 *ALERTA DETECTADO!*
+    # Formata a mensagem estilo Slack (igual ao exemplo)
+    formatted_alert = f"""{original_message}
 
-*👤 Quem:* {user_name}
-*📝 Mensagem original:* 
-> {original_message}
-*🔑 Palavra-chave detectada:* {', '.join(KEYWORDS)}{message_link}
-
-💡 *Dica:* Clique no link acima para ir direto ao local da mensagem!"""
+*Posted in #{channel_name} | {data_hora} | <{message_link}|View message>*"""
     
     print(f"📝 Alerta formatado: {formatted_alert}")
     
     # ✅ ENVIA APENAS PARA SEU DM
     if USER_ID:
         try:
-            # Envia como uma mensagem normal (não como reply)
             response = client.chat_postMessage(
                 channel=USER_ID,
                 text=formatted_alert,
-                mrkdwn=True  # Permite formatação markdown
+                mrkdwn=True
             )
-            print(f"✅ Alerta com quote enviado para seu DM!")
+            print(f"✅ Alerta enviado para seu DM!")
             
-            # Se tiver o timestamp da mensagem original, adiciona uma reação de alerta lá (opcional)
+            # Adiciona reação de alerta na mensagem original
             if channel_id and ts:
                 try:
                     client.reactions_add(
@@ -129,7 +128,7 @@ def send_slack_alerts(original_message: str, channel_id: str = None, ts: str = N
                         name="warning",
                         timestamp=ts
                     )
-                    print(f"✅ Reação de alerta adicionada à mensagem original!")
+                    print(f"✅ Reação de alerta adicionada!")
                 except Exception as e:
                     print(f"⚠️ Não foi possível adicionar reação: {e}")
                     
@@ -163,28 +162,24 @@ def slack_events():
     text = normalize(text_original)
     
     # Pega informações da mensagem original
-    channel_id = event.get("channel")  # Canal onde a mensagem foi enviada
-    ts = event.get("ts")  # Timestamp da mensagem
-    user_id = event.get("user")  # ID do usuário que enviou
+    channel_id = event.get("channel")
+    ts = event.get("ts")
+    user_id = event.get("user")
     
     print(f"📝 Mensagem: '{text_original}'")
     print(f"📍 Canal: {channel_id}")
-    print(f"🕒 Timestamp: {ts}")
-    print(f"👤 Usuário: {user_id}")
     print(f"🔑 Keywords: {KEYWORDS}")
 
     # Verifica se tem keyword
     keyword_detected = False
-    detected_words = []
     for word in KEYWORDS:
         if word in text:
             print(f"✅ KEYWORD: '{word}'")
             keyword_detected = True
-            detected_words.append(word)
             break
     
     if keyword_detected:
-        print("🔥 Enviando alerta com quote...")
+        print("🔥 Enviando alerta...")
         send_slack_alerts(text_original, channel_id, ts, user_id)
     else:
         print("⚠️ Nenhuma keyword")
