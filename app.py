@@ -43,11 +43,22 @@ client = WebClient(token=SLACK_TOKEN)
 
 # 📧 ENVIO DE EMAIL
 def send_email_alert(message: str):
+    print(f"📧 Tentando enviar email... EMAIL_ENABLED={EMAIL_ENABLED}")
+    
     if not EMAIL_ENABLED:
-        print("⚠️ Email desativado")
+        print("⚠️ Email desativado (EMAIL_ENABLED não é 'true')")
+        return
+
+    # Verifica se as configurações existem
+    if not EMAIL_FROM or not EMAIL_TO or not EMAIL_APP_PASSWORD:
+        print(f"❌ Configurações de email incompletas:")
+        print(f"   EMAIL_FROM: {'OK' if EMAIL_FROM else 'MISSING'}")
+        print(f"   EMAIL_TO: {'OK' if EMAIL_TO else 'MISSING'}")
+        print(f"   EMAIL_APP_PASSWORD: {'OK' if EMAIL_APP_PASSWORD else 'MISSING'}")
         return
 
     try:
+        print(f"📧 Conectando ao Gmail...")
         msg = MIMEText(f"🚨 ALERTA:\n\n{message}")
         msg["Subject"] = "🚨 Alerta Slack"
         msg["From"] = EMAIL_FROM
@@ -55,13 +66,15 @@ def send_email_alert(message: str):
 
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.starttls()
+            print(f"📧 Tentando login com {EMAIL_FROM}...")
             server.login(EMAIL_FROM, EMAIL_APP_PASSWORD)
+            print(f"📧 Login OK! Enviando email...")
             server.send_message(msg)
-
-        print("📧 Email enviado com sucesso")
+            
+        print("✅ Email enviado com sucesso!")
 
     except Exception as e:
-        print("❌ Erro ao enviar email:", e)
+        print(f"❌ Erro detalhado ao enviar email: {type(e).__name__}: {e}")
 
 # 🚨 ENVIO DE ALERTA
 def send_slack_alerts(message: str) -> None:
@@ -70,17 +83,23 @@ def send_slack_alerts(message: str) -> None:
 
     if USER_ID:
         try:
-            client.chat_postMessage(channel=USER_ID, text=text)
+            response = client.chat_postMessage(channel=USER_ID, text=text)
+            print(f"✅ DM enviada com sucesso! Timestamp: {response.get('ts')}")
         except SlackApiError as e:
-            print("❌ ERRO DM:", e.response)
+            print(f"❌ ERRO DM - Código: {e.response.get('error')}")
 
     if ALERT_CHANNEL:
         try:
-            client.chat_postMessage(channel=ALERT_CHANNEL, text=text)
+            response = client.chat_postMessage(channel=ALERT_CHANNEL, text=text)
+            print(f"✅ Canal enviado com sucesso! Timestamp: {response.get('ts')}")
         except SlackApiError as e:
-            print("❌ ERRO CANAL:", e.response)
+            print(f"❌ ERRO CANAL - Código: {e.response.get('error')}")
 
-    send_email_alert(message)
+    # Tenta enviar email
+    try:
+        send_email_alert(message)
+    except Exception as e:
+        print(f"❌ ERRO no envio de email: {e}")
 
 # 🏠 ROTA RAIZ
 @app.route("/", methods=["GET"])
@@ -121,7 +140,7 @@ def slack_events():
     print(f"📝 Mensagem normalizada: '{text}'")
     print(f"🔑 Keywords configuradas: {KEYWORDS}")
 
-    # 🔍 DETECÇÃO DE KEYWORDS (CORRIGIDA - sem regex problemático)
+    # 🔍 DETECÇÃO DE KEYWORDS
     keyword_detected = False
     for word in KEYWORDS:
         if word in text:
