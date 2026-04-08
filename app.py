@@ -72,24 +72,28 @@ def send_email_alert(message: str):
     except Exception as e:
         print(f"❌ Erro ao enviar email: {e}")
 
-# 🚨 ENVIO DE ALERTA
+# 🚨 ENVIO DE ALERTA (APENAS PARA O CANAL alert-bot)
 def send_slack_alerts(message: str) -> None:
     text = f"🚨 ALERTA:\n{message}"
     print("🚀 TENTANDO ENVIAR ALERTA:", text)
 
-    if USER_ID:
-        try:
-            response = client.chat_postMessage(channel=USER_ID, text=text)
-            print(f"✅ DM enviada com sucesso!")
-        except SlackApiError as e:
-            print(f"❌ ERRO DM: {e.response.get('error')}")
-
+    # ✅ APENAS ENVIA PARA O CANAL CONFIGURADO
     if ALERT_CHANNEL:
         try:
             response = client.chat_postMessage(channel=ALERT_CHANNEL, text=text)
-            print(f"✅ Canal enviado com sucesso!")
+            print(f"✅ Alerta enviado para {ALERT_CHANNEL} com sucesso!")
         except SlackApiError as e:
-            print(f"❌ ERRO CANAL: {e.response.get('error')}")
+            print(f"❌ ERRO AO ENVIAR PARA CANAL: {e.response.get('error')}")
+    else:
+        print("⚠️ ALERT_CHANNEL não configurado - não é possível enviar alertas")
+
+    # ❌ REMOVIDO - NÃO ENVIA MAIS DM
+    # if USER_ID:
+    #     try:
+    #         response = client.chat_postMessage(channel=USER_ID, text=text)
+    #         print(f"✅ DM enviada com sucesso!")
+    #     except SlackApiError as e:
+    #         print(f"❌ ERRO DM: {e.response.get('error')}")
 
     send_email_alert(message)
 
