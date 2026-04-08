@@ -113,14 +113,24 @@ def slack_events():
     if event.get("bot_id") or event.get("subtype") in ("bot_message", "message_changed"):
         return "", 200
 
-    channel_type = event.get("channel_type")
-    channel = event.get("channel")
     text_original = event.get("text", "")
     text = normalize(text_original)
+    
+    # 📝 LOGS DE DEBUG
+    print(f"📝 Mensagem recebida: '{text_original}'")
+    print(f"📝 Mensagem normalizada: '{text}'")
+    print(f"🔑 Keywords configuradas: {KEYWORDS}")
 
-    # 🔍 DETECÇÃO DE KEYWORDS (mais segura)
-    if any(re.search(rf"\b{word}\b", text) for word in KEYWORDS):
-        print("🔥 KEYWORD DETECTADA!")
+    # 🔍 DETECÇÃO DE KEYWORDS (CORRIGIDA - sem regex problemático)
+    keyword_detected = False
+    for word in KEYWORDS:
+        if word in text:
+            print(f"✅ KEYWORD ENCONTRADA: '{word}'")
+            keyword_detected = True
+            break
+    
+    if keyword_detected:
+        print("🔥 KEYWORD DETECTADA! Enviando alerta...")
         send_slack_alerts(text_original)
     else:
         print("⚠️ Nenhuma keyword detectada")
